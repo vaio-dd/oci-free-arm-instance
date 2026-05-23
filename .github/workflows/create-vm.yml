@@ -25,13 +25,12 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Cache pip packages
+      - name: Restore pip package cache
         id: cache-pip
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.local
           key: ${{ runner.os }}-pip-oci-cli-v1
-          save-always: true
 
       - name: Add OCI CLI to path
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -83,23 +82,38 @@ jobs:
             echo "Success! 'PROVISIONING' state found in output."
             exit 0
           else
+            echo "$OCI_OUTPUT"
             echo "Error: Success string not found in OCI output. Failing the step."
             exit 1
           fi
 
+      - name: Save pip package cache
+        if: always() && steps.cache-pip.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.local
+          key: ${{ steps.cache-pip.outputs.cache-primary-key }}
+
       - name: Send Discord Notification
         if: always() && env.DISCORD_WEBHOOK_URL != '' && env.DISCORD_WEBHOOK_URL != 'disabled'
-        uses: sarisia/actions-status-discord@v1.15.4
-        with:
-          webhook: ${{ env.DISCORD_WEBHOOK_URL }}
-          title: "OCI VM Status: ${{ steps.create_vm.outcome }}"
-          status: ${{ steps.create_vm.outcome }}
-          color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
-          description: |
-            Attempt to create A1.Flex VM.
-            **Status:** `${{ steps.create_vm.outcome }}`
+        env:
+          STATUS: ${{ steps.create_vm.outcome }}
+          LOG_DATA: ${{ steps.create_vm.outputs.log_data }}
+        run: |
+          if [ "$STATUS" = "success" ]; then
+            COLOR=2664261
+          else
+            COLOR=14431557
+          fi
 
-            **Log Output:**
-            ```json
-            ${{ steps.create_vm.outputs.log_data }}
-            ```
+          DESCRIPTION="$(printf 'Attempt to create A1.Flex VM.\n**Status:** `%s`\n\n**Log Output:**\n```json\n%s\n```' "$STATUS" "$LOG_DATA")"
+          PAYLOAD="$(jq -nc \
+            --arg title "OCI VM Status: $STATUS" \
+            --arg description "$DESCRIPTION" \
+            --argjson color "$COLOR" \
+            '{embeds:[{title:$title,description:$description,color:$color}]}')"
+
+          curl -fsS \
+            -H 'Content-Type: application/json' \
+            -d "$PAYLOAD" \
+            "$DISCORD_WEBHOOK_URL"
