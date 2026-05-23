@@ -113,7 +113,14 @@ jobs:
             --argjson color "$COLOR" \
             '{embeds:[{title:$title,description:$description,color:$color}]}')"
 
-          curl -fsS \
+          response_code="$(curl -sS \
+            -o /tmp/discord-response.txt \
+            -w '%{http_code}' \
             -H 'Content-Type: application/json' \
             -d "$PAYLOAD" \
-            "$DISCORD_WEBHOOK_URL"
+            "$DISCORD_WEBHOOK_URL" || true)"
+
+          if [ "$response_code" -lt 200 ] || [ "$response_code" -ge 300 ]; then
+            echo "::warning::Discord notification failed with HTTP $response_code"
+            cat /tmp/discord-response.txt || true
+          fi
